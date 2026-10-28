@@ -1,0 +1,3 @@
+"use client";
+import { AlertTriangle } from "lucide-react";
+export default function ErrorPage({ reset }: { error: Error & { digest?: string }; reset: () => void }) { return <div className="card mx-auto max-w-xl p-8 text-center" role="alert"><AlertTriangle aria-hidden="true" className="mx-auto size-9 text-red-600" /><h1 className="mt-4 text-xl font-semibold">Une erreur est survenue</h1><p className="mt-2 text-sm text-slate-600">L&apos;opération n&apos;a pas pu être terminée. Aucune donnée n&apos;a été supprimée.</p><button className="button-primary mt-6" onClick={reset}>Réessayer</button></div>; }

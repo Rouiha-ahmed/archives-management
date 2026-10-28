@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Keep the development-only Next.js status panel from covering application UI.
+  // Compile and runtime errors are still surfaced by Next.js.
+  devIndicators: false,
   experimental: {
     agentFeedback: true,
   },

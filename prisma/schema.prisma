@@ -1,0 +1,313 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum StatutDocument {
+  DISPONIBLE
+  SORTI
+  INDISPONIBLE
+
+  @@map("statut_document")
+}
+
+enum TypeDemandeAcces {
+  CONSULTATION
+  SORTIE
+
+  @@map("type_demande_acces")
+}
+
+enum StatutDemandeAcces {
+  EN_ATTENTE
+  APPROUVEE
+  REFUSEE
+  EN_COURS
+  RETOURNEE
+
+  @@map("statut_demande_acces")
+}
+
+enum DecisionValidation {
+  APPROUVEE
+  REFUSEE
+
+  @@map("decision_validation")
+}
+
+enum EtatRetourDocument {
+  BON
+  ENDOMMAGE
+  PERDU
+  NON_REINTEGRE
+
+  @@map("etat_retour_document")
+}
+
+model Emplacement {
+  id        String   @id @default(uuid()) @db.Uuid
+  zone      String
+  rack      String
+  niveau    String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  boites    Boite[]
+
+  @@unique([zone, rack, niveau], map: "emplacements_zone_rack_niveau_key")
+  @@map("emplacements")
+}
+
+model Boite {
+  id            String      @id @default(uuid()) @db.Uuid
+  code          String      @unique(map: "boites_code_key")
+  description   String?
+  emplacementId String      @map("emplacement_id") @db.Uuid
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  emplacement   Emplacement @relation(fields: [emplacementId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  documents     Document[]
+  retours       Mouvement[] @relation("MouvementBoiteRetour")
+
+  @@index([emplacementId], map: "boites_emplacement_id_idx")
+  @@index([code(ops: raw("gin_trgm_ops"))], map: "boites_code_trgm_idx", type: Gin)
+  @@map("boites")
+}
+
+model Document {
+  id             String         @id @default(uuid()) @db.Uuid
+  reference      String         @unique(map: "documents_reference_key")
+  titre          String
+  description    String?
+  classification String?
+  confidentiel   Boolean        @default(false)
+  dateDocument   DateTime?      @map("date_document") @db.Date
+  statut         StatutDocument @default(DISPONIBLE)
+  boiteId        String         @map("boite_id") @db.Uuid
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  boite          Boite          @relation(fields: [boiteId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  demandes       DemandeAcces[]
+  mouvements     Mouvement[]
+
+  @@index([boiteId], map: "documents_boite_id_idx")
+  @@index([statut], map: "documents_statut_idx")
+  @@index([confidentiel, statut], map: "documents_confidentiel_statut_idx")
+  @@index([classification], map: "documents_classification_idx")
+  @@index([reference(ops: raw("gin_trgm_ops"))], map: "documents_reference_trgm_idx", type: Gin)
+  @@index([titre(ops: raw("gin_trgm_ops"))], map: "documents_titre_trgm_idx", type: Gin)
+  @@index([description(ops: raw("gin_trgm_ops"))], map: "documents_description_trgm_idx", type: Gin)
+  @@index([createdAt], map: "documents_created_at_idx")
+  @@map("documents")
+}
+
+model Utilisateur {
+  id                String         @id @default(uuid()) @db.Uuid
+  nom               String
+  email             String         @unique(map: "utilisateurs_email_key") @db.Citext
+  passwordHash      String?        @map("password_hash")
+  actif             Boolean        @default(true)
+  sessionVersion    Int            @default(0) @map("session_version")
+  passwordChangedAt DateTime?      @map("password_changed_at") @db.Timestamptz(3)
+  lastLoginAt       DateTime?      @map("last_login_at") @db.Timestamptz(3)
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  demandes          DemandeAcces[]
+  mouvements        Mouvement[]    @relation("MouvementBeneficiaire")
+  sortiesEffectuees Mouvement[]    @relation("MouvementOperateurSortie")
+  retoursConfirmes  Mouvement[]    @relation("MouvementOperateurRetour")
+  signatures        Signature[]
+  consultations     DemandeAcces[] @relation("ConsultationOperateur")
+  roles             UserRole[]
+  validations       Validation[]
+  auditLogs         AuditLog[]     @relation("AuditActor")
+
+  @@index([actif], map: "utilisateurs_actif_idx")
+  @@map("utilisateurs")
+}
+
+model DemandeAcces {
+  id                      String             @id @default(uuid()) @db.Uuid
+  type                    TypeDemandeAcces
+  statut                  StatutDemandeAcces @default(EN_ATTENTE)
+  motif                   String
+  retourPrevu             DateTime?          @map("retour_prevu") @db.Timestamptz(3)
+  documentId              String             @map("document_id") @db.Uuid
+  demandeurId             String             @map("demandeur_id") @db.Uuid
+  consultationOperateurId String?            @map("consultation_operateur_id") @db.Uuid
+  consultationStartedAt   DateTime?          @map("consultation_started_at") @db.Timestamptz(3)
+  consultationCompletedAt DateTime?          @map("consultation_completed_at") @db.Timestamptz(3)
+  createdAt               DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  document                Document           @relation(fields: [documentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  demandeur               Utilisateur        @relation(fields: [demandeurId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  consultationOperateur   Utilisateur?       @relation("ConsultationOperateur", fields: [consultationOperateurId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  mouvement               Mouvement?
+  validation              Validation?
+
+  // Supports the composite foreign key that guarantees a movement and its
+  // request always identify the same document.
+  @@unique([id, documentId], map: "demandes_acces_id_document_id_key")
+  @@index([documentId, statut], map: "demandes_acces_document_id_statut_idx")
+  @@index([demandeurId, statut], map: "demandes_acces_demandeur_id_statut_idx")
+  @@index([statut, retourPrevu], map: "demandes_acces_statut_retour_prevu_idx")
+  @@index([type, statut], map: "demandes_acces_type_statut_idx")
+  @@index([consultationOperateurId], map: "demandes_acces_consultation_operateur_id_idx")
+  @@map("demandes_acces")
+}
+
+model Mouvement {
+  id                  String              @id @default(uuid()) @db.Uuid
+  documentId          String              @map("document_id") @db.Uuid
+  demandeId           String              @map("demande_id") @db.Uuid
+  utilisateurId       String              @map("utilisateur_id") @db.Uuid
+  operateurSortieId   String?             @map("operateur_sortie_id") @db.Uuid
+  retourPrevu         DateTime?           @map("retour_prevu") @db.Timestamptz(3)
+  dateSortie          DateTime            @default(now()) @map("date_sortie") @db.Timestamptz(3)
+  dateRetour          DateTime?           @map("date_retour") @db.Timestamptz(3)
+  retourConfirmeParId String?             @map("retour_confirme_par_id") @db.Uuid
+  etatRetour          EtatRetourDocument? @map("etat_retour")
+  observationsRetour  String?             @map("observations_retour")
+  boiteRetourId       String?             @map("boite_retour_id") @db.Uuid
+  signatureUrl        String?             @map("signature_url")
+  createdAt           DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  document            Document            @relation(fields: [documentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  demande             DemandeAcces        @relation(fields: [demandeId, documentId], references: [id, documentId], onDelete: Restrict, onUpdate: Cascade)
+  utilisateur         Utilisateur         @relation("MouvementBeneficiaire", fields: [utilisateurId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  operateurSortie     Utilisateur?        @relation("MouvementOperateurSortie", fields: [operateurSortieId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  retourConfirmePar   Utilisateur?        @relation("MouvementOperateurRetour", fields: [retourConfirmeParId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  boiteRetour         Boite?              @relation("MouvementBoiteRetour", fields: [boiteRetourId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  signature           Signature?
+
+  @@unique([demandeId, documentId], map: "mouvements_demande_id_document_id_key")
+  @@index([documentId, dateSortie], map: "mouvements_document_id_date_sortie_idx")
+  @@index([utilisateurId, dateSortie], map: "mouvements_utilisateur_id_date_sortie_idx")
+  @@index([dateRetour], map: "mouvements_date_retour_idx")
+  @@index([retourPrevu, dateRetour], map: "mouvements_retour_prevu_date_retour_idx")
+  @@index([operateurSortieId, dateSortie], map: "mouvements_operateur_sortie_id_date_sortie_idx")
+  @@index([retourConfirmeParId, dateRetour], map: "mouvements_retour_operateur_date_retour_idx")
+  @@index([boiteRetourId], map: "mouvements_boite_retour_id_idx")
+  @@map("mouvements")
+}
+
+model Signature {
+  id           String      @id @default(uuid()) @db.Uuid
+  mouvementId  String      @unique(map: "signatures_mouvement_id_key") @map("mouvement_id") @db.Uuid
+  signataireId String      @map("signataire_id") @db.Uuid
+  storageKey   String      @unique(map: "signatures_storage_key_key") @map("storage_key")
+  mimeType     String      @map("mime_type")
+  checksum     String
+  byteSize     Int         @map("byte_size")
+  signedAt     DateTime    @default(now()) @map("signed_at") @db.Timestamptz(3)
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  mouvement    Mouvement   @relation(fields: [mouvementId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  signataire   Utilisateur @relation(fields: [signataireId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([signataireId, signedAt], map: "signatures_signataire_id_signed_at_idx")
+  @@map("signatures")
+}
+
+model Role {
+  id           String           @id @default(uuid()) @db.Uuid
+  code         String           @unique(map: "roles_code_key")
+  nom          String
+  description  String?
+  systeme      Boolean          @default(false)
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  utilisateurs UserRole[]
+  permissions  RolePermission[]
+
+  @@index([systeme], map: "roles_systeme_idx")
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  code        String           @unique(map: "permissions_code_key")
+  description String
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  roles       RolePermission[]
+
+  @@map("permissions")
+}
+
+model UserRole {
+  id            String      @id @default(uuid()) @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  roleId        String      @map("role_id") @db.Uuid
+  assignedAt    DateTime    @default(now()) @map("assigned_at") @db.Timestamptz(3)
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  role          Role        @relation(fields: [roleId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([utilisateurId, roleId], map: "user_roles_utilisateur_id_role_id_key")
+  @@index([roleId], map: "user_roles_role_id_idx")
+  @@map("user_roles")
+}
+
+model RolePermission {
+  id           String     @id @default(uuid()) @db.Uuid
+  roleId       String     @map("role_id") @db.Uuid
+  permissionId String     @map("permission_id") @db.Uuid
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([roleId, permissionId], map: "role_permissions_role_id_permission_id_key")
+  @@index([permissionId], map: "role_permissions_permission_id_idx")
+  @@map("role_permissions")
+}
+
+model Validation {
+  id           String             @id @default(uuid()) @db.Uuid
+  demandeId    String             @unique(map: "validations_demande_id_key") @map("demande_id") @db.Uuid
+  validateurId String             @map("validateur_id") @db.Uuid
+  decision     DecisionValidation
+  commentaire  String?
+  decidedAt    DateTime           @default(now()) @map("decided_at") @db.Timestamptz(3)
+  demande      DemandeAcces       @relation(fields: [demandeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  validateur   Utilisateur        @relation(fields: [validateurId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([validateurId, decidedAt], map: "validations_validateur_id_decided_at_idx")
+  @@index([decision, decidedAt], map: "validations_decision_decided_at_idx")
+  @@map("validations")
+}
+
+model AuditLog {
+  id         String       @id @default(uuid()) @db.Uuid
+  actorId    String?      @map("actor_id") @db.Uuid
+  action     String
+  entityType String       @map("entity_type")
+  entityId   String?      @map("entity_id")
+  oldValues  Json?        @map("old_values") @db.JsonB
+  newValues  Json?        @map("new_values") @db.JsonB
+  metadata   Json?        @db.JsonB
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  actor      Utilisateur? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([createdAt], map: "audit_logs_created_at_idx")
+  @@index([actorId, createdAt], map: "audit_logs_actor_id_created_at_idx")
+  @@index([action, createdAt], map: "audit_logs_action_created_at_idx")
+  @@index([entityType, entityId, createdAt], map: "audit_logs_entity_created_at_idx")
+  @@map("audit_logs")
+}
+
+model LoginAttempt {
+  id              String    @id @default(uuid()) @db.Uuid
+  keyHash         String    @unique(map: "login_attempts_key_hash_key") @map("key_hash")
+  failedCount     Int       @default(0) @map("failed_count")
+  windowStartedAt DateTime  @map("window_started_at") @db.Timestamptz(3)
+  blockedUntil    DateTime? @map("blocked_until") @db.Timestamptz(3)
+  lastAttemptAt   DateTime  @default(now()) @map("last_attempt_at") @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([blockedUntil], map: "login_attempts_blocked_until_idx")
+  @@index([lastAttemptAt], map: "login_attempts_last_attempt_at_idx")
+  @@map("login_attempts")
+}
