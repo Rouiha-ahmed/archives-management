@@ -15,6 +15,7 @@ import {
 } from "@/lib/permissions/definitions";
 import { hasPermission } from "@/lib/permissions/service";
 import { prisma } from "@/lib/prisma";
+import { listAuditLogs } from "@/modules/audit/service";
 import { setUserActive, setUserRole } from "@/modules/users/service";
 import {
   decideAccessRequest,
@@ -153,6 +154,70 @@ describe.skipIf(!integrationEnabled)("database security integration", () => {
     const log = await prisma.auditLog.create({ data: { action: "test.created", entityType: "Test" } });
     await expect(prisma.auditLog.update({ where: { id: log.id }, data: { action: "tampered" } })).rejects.toThrow(/append-only/);
     await expect(prisma.auditLog.delete({ where: { id: log.id } })).rejects.toThrow(/append-only/);
+  });
+
+  it("denies audit-log access without the audit permission", async () => {
+    const requester = await createTestUser(ROLES.DEMANDEUR);
+    await expect(listAuditLogs(requester.id)).rejects.toBeInstanceOf(AuthorizationError);
+  });
+
+  it("resolves business references, translated filters and pagination without mutating history", async () => {
+    const admin = await createTestUser(ROLES.ADMIN, true, "admin@example.test");
+    const requester = await createTestUser(ROLES.DEMANDEUR);
+    const validator = await createTestUser(ROLES.VALIDATEUR, true, "validator@example.test");
+    const request = await createRequest(requester.id);
+    await decideAccessRequest(validator.id, {
+      demandeId: request.id,
+      decision: "APPROUVEE",
+      commentaire: "Accès métier confirmé.",
+    });
+    const document = await prisma.document.findUniqueOrThrow({ where: { id: request.documentId } });
+    const countBeforeRead = await prisma.auditLog.count();
+
+    const result = await listAuditLogs(admin.id, {
+      search: document.reference,
+      action: "access_request.approved",
+      page: "1",
+      pageSize: "1",
+    });
+
+    expect(result).toMatchObject({ total: 1, page: 1, pageSize: 1 });
+    expect(result.items[0]).toMatchObject({
+      actor: { name: "User VALIDATEUR", email: "validator@example.test" },
+      action: { label: "Demande d'accès approuvée" },
+      subject: { businessReference: document.reference },
+    });
+    expect(result.items[0]?.metadataDetails).toContainEqual({ label: "Commentaire", value: "Accès métier confirmé." });
+    expect(result.items[0]?.description).toContain(document.reference);
+    expect(await prisma.auditLog.count()).toBe(countBeforeRead);
+  });
+
+  it("handles missing metadata and withholds technical payloads from non-administrators", async () => {
+    const archivist = await createTestUser(ROLES.ARCHIVISTE, true, "archivist@example.test");
+    const archivistRole = await prisma.role.findUniqueOrThrow({ where: { code: ROLES.ARCHIVISTE } });
+    const auditPermission = await prisma.permission.findUniqueOrThrow({ where: { code: PERMISSIONS.AUDIT_READ } });
+    await prisma.rolePermission.create({
+      data: { roleId: archivistRole.id, permissionId: auditPermission.id },
+    });
+    await prisma.auditLog.create({
+      data: { action: "document.updated", entityType: "Document" },
+    });
+
+    const result = await listAuditLogs(archivist.id, { action: "document.updated" });
+
+    expect(result.total).toBe(1);
+    expect(result.items[0]).toMatchObject({
+      actor: { name: "Le système" },
+      action: { label: "Document modifié" },
+      subject: { label: "Document" },
+      summaryDetails: [],
+      metadataDetails: [],
+      previousValues: [],
+      newValues: [],
+      canViewTechnicalDetails: false,
+      technicalDetails: [],
+      technicalPayload: { metadata: null, oldValues: null, newValues: null },
+    });
   });
 
   async function seedRbac() {

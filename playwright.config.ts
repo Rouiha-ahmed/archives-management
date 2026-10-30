@@ -1,6 +1,7 @@
 import { loadEnvConfig } from "@next/env";
 import { defineConfig, devices } from "@playwright/test";
 
+Reflect.set(process.env, "NODE_ENV", "test");
 loadEnvConfig(process.cwd());
 
 const baseURL = "http://127.0.0.1:3100";
@@ -24,6 +25,7 @@ export default defineConfig({
     timeout: 120_000,
     env: {
       ...process.env,
+      NODE_ENV: "development",
       DATABASE_URL: process.env.TEST_DATABASE_URL ?? "",
       AUTH_URL: baseURL,
       AUTH_SECRET: "synthetic-e2e-auth-secret-with-sufficient-length",

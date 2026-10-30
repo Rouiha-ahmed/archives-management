@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import argon2 from "argon2";
 import { Pool } from "pg";
@@ -142,6 +143,79 @@ test("client acceptance: registration, request, decision, signed handover, track
   expect(finalState.rows[0]).toMatchObject({ document_status: "DISPONIBLE", request_status: "RETOURNEE", audit_count: 2 });
   expect(finalState.rows[0]?.date_retour).not.toBeNull();
   expect(browserErrors).toEqual([]);
+});
+
+test("audit journal is readable, accessible, filtered and paginated", async ({ page }) => {
+  test.setTimeout(300_000);
+  const admin = await pool.query<{ id: string }>(
+    `SELECT id FROM utilisateurs WHERE email = $1`,
+    [users.admin],
+  );
+  const adminId = admin.rows[0]?.id;
+  if (!adminId) throw new Error("Synthetic administrator unavailable");
+
+  for (let index = 0; index < 21; index += 1) {
+    await pool.query(
+      `INSERT INTO audit_logs
+        (id, actor_id, action, entity_type, entity_id, new_values, metadata, created_at)
+       VALUES ($1, $2, 'user.created', 'Utilisateur', $3, $4::jsonb, $5::jsonb, $6)`,
+      [
+        randomUUID(),
+        adminId,
+        adminId,
+        JSON.stringify({ nom: "Recette admin", email: users.admin, actif: true }),
+        JSON.stringify({ source: "secure-bootstrap" }),
+        new Date(Date.now() - index * 60_000),
+      ],
+    );
+  }
+
+  await login(page, users.admin);
+  await page.goto("/administration/audit");
+  await expect(page.getByRole("heading", { level: 1, name: "Journal d'audit" })).toBeVisible();
+  await expect(page.getByPlaceholder("Rechercher par utilisateur, document ou action")).toBeVisible();
+  await expect(page.getByLabel("Action")).toContainText("Utilisateur créé");
+  const table = page.getByRole("table", { name: "Journal des opérations sensibles" });
+  await expect(table.getByRole("columnheader")).toHaveText([
+    "Date et heure",
+    "Effectué par",
+    "Action",
+    "Élément concerné",
+    "Détails",
+  ]);
+  await expect(table.locator("tbody tr")).toHaveCount(20);
+  await expect(table).toContainText("Utilisateur créé");
+  await expect(table.locator("pre:visible")).toHaveCount(0);
+
+  const accessibility = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
+    .analyze();
+  expect(
+    accessibility.violations,
+    accessibility.violations.map((item) => `${item.id}: ${item.help}`).join("\n"),
+  ).toEqual([]);
+
+  await table.getByRole("button", { name: "Voir les détails" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Utilisateur créé" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Recette admin");
+  await expect(dialog).toContainText("Référence métier");
+  await expect(dialog).toContainText("Informations techniques réservées aux administrateurs");
+  await dialog.getByRole("button", { name: "Fermer", exact: true }).click();
+
+  await page.getByLabel("Action").selectOption("user.created");
+  await page.getByRole("button", { name: "Filtrer" }).click();
+  await expect(page).toHaveURL(/action=user\.created/);
+  await page.getByRole("link", { name: "Suivant" }).click();
+  await expect(page).toHaveURL(/page=2/);
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+
+  await page.setViewportSize({ width: 375, height: 812 });
+  await expect(page.getByRole("article").filter({ hasText: "Utilisateur créé" })).toBeVisible();
+
+  await switchUser(page, users.archivist);
+  await page.goto("/administration/audit");
+  await expect(page).toHaveURL(/\/interdit$/);
 });
 
 test("administration and QR utility pages load without browser errors", async ({ page }) => {

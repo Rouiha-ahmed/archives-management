@@ -33,15 +33,12 @@ Ouvrez [http://localhost:3000](http://localhost:3000).
 
 ## Variables d'environnement
 
-Configurez dans le fichier ignoré `.env` :
+Le fichier ignoré `.env` contient uniquement les trois valeurs nécessaires à
+l'exécution locale normale :
 
 - `DATABASE_URL` : base locale principale ;
-- `SHADOW_DATABASE_URL` : base shadow réservée à Prisma Migrate ;
-- `TEST_DATABASE_URL` : base isolée dont le nom contient `_test` ;
-- `AUTH_SECRET` et `AUTH_RATE_LIMIT_SECRET` : valeurs indépendantes générées aléatoirement ;
-- `AUTH_URL` : `http://localhost:3000` en local ;
-- `APP_TIME_ZONE` : fuseau d'affichage, par défaut `Africa/Casablanca` ;
-- `SIGNATURE_STORAGE_DIR` : répertoire privé optionnel, hors de `public`.
+- `AUTH_SECRET` : chiffrement et signature des sessions Auth.js ;
+- `AUTH_RATE_LIMIT_SECRET` : HMAC indépendant pour la limitation des connexions.
 
 Générez les secrets avec :
 
@@ -50,6 +47,15 @@ openssl rand -base64 48
 ```
 
 Ne versionnez jamais `.env`, un mot de passe ou une preuve de signature.
+
+Les usages spécialisés restent séparés :
+
+- `SHADOW_DATABASE_URL` se place dans `.env.local` uniquement pour créer de
+  nouvelles migrations avec `npm run db:migrate` ;
+- `TEST_DATABASE_URL` se place dans `.env.test.local` et doit viser une base
+  dédiée dont le nom contient `_test` ;
+- `AUTH_URL`, `AUTH_TRUST_HOST`, `APP_TIME_ZONE` et `SIGNATURE_STORAGE_DIR`
+  sont des surcharges facultatives documentées dans `.env.example`.
 
 ## Initialisation RBAC et premier administrateur
 
@@ -120,7 +126,9 @@ npm run test:e2e
 npm run build
 ```
 
-Les tests base de données et Playwright utilisent exclusivement `TEST_DATABASE_URL`. Ils tronquent cette base dédiée : ne la faites jamais pointer vers une base contenant des données réelles.
+Les tests base de données et Playwright chargent `TEST_DATABASE_URL` depuis
+`.env.test.local`. Ils tronquent cette base dédiée : ne la faites jamais pointer
+vers une base contenant des données réelles.
 
 ## Documentation
 
